@@ -1,0 +1,11 @@
+node_modules/
+public/pyodide/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
