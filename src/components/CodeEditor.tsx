@@ -4,7 +4,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { bracketMatching, defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language'
 import { python } from '@codemirror/lang-python'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import {
   crosshairCursor,
   drawSelection,
@@ -22,11 +22,15 @@ interface CodeEditorProps {
   value: string
   onChange(value: string): void
   fontSize: number
+  readOnly?: boolean
 }
 
-export function CodeEditor({ value, onChange, fontSize }: CodeEditorProps) {
+const readOnlyExtension = (readOnly: boolean) => [EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]
+
+export function CodeEditor({ value, onChange, fontSize, readOnly = false }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const readOnlyCompartment = useRef(new Compartment())
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
@@ -42,6 +46,7 @@ export function CodeEditor({ value, onChange, fontSize }: CodeEditorProps) {
         drawSelection(),
         dropCursor(),
         EditorState.allowMultipleSelections.of(true),
+        readOnlyCompartment.current.of(readOnlyExtension(readOnly)),
         indentUnit.of('    '),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         bracketMatching(),
@@ -82,6 +87,9 @@ export function CodeEditor({ value, onChange, fontSize }: CodeEditorProps) {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
   }, [value])
 
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: readOnlyCompartment.current.reconfigure(readOnlyExtension(readOnly)) })
+  }, [readOnly])
+
   return <div className="code-editor" ref={hostRef} style={{ '--editor-font-size': `${fontSize}px` } as React.CSSProperties} />
 }
-

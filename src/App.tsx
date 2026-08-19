@@ -80,10 +80,12 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   const [outputs, setOutputs] = useState<OutputItem[]>([])
   const [packageMessages, setPackageMessages] = useState<Partial<Record<SupportedPackage, string>>>({})
   const [offlineReady, setOfflineReady] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
   const workspaceRef = useRef<Workspace | null>(null)
   const dirtyRef = useRef(false)
   const revisionRef = useRef(0)
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const transitioningRef = useRef(false)
   const settingsReadyRef = useRef(false)
   const importRef = useRef<HTMLInputElement>(null)
 
@@ -260,11 +262,24 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   }, [persist])
 
   const updateWorkspace = useCallback((next: Workspace) => {
+    if (transitioningRef.current) return
     revisionRef.current += 1
     dirtyRef.current = true
     setSaveState('saving')
     setWorkspace(next)
   }, [])
+
+  const beginTransition = () => {
+    if (transitioningRef.current) return false
+    transitioningRef.current = true
+    setTransitioning(true)
+    return true
+  }
+
+  const finishTransition = () => {
+    transitioningRef.current = false
+    setTransitioning(false)
+  }
 
   const run = useCallback(() => {
     const current = workspaceRef.current
@@ -347,11 +362,12 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   const createProject = async () => {
     const name = window.prompt('项目名称', '新的 Python 项目')
     if (!name) return
-    if (!(await flushCurrentWorkspace())) {
-      window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
-      return
-    }
+    if (!beginTransition()) return
     try {
+      if (!(await flushCurrentWorkspace())) {
+        window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
+        return
+      }
       const next = createStarterWorkspace(name)
       await store.save(next)
       setWorkspace(next)
@@ -359,6 +375,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
       setSelectedFolderId(null)
       await refreshProjects()
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
+    finally { finishTransition() }
   }
 
   const projectAction = async () => {
@@ -369,56 +386,67 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
       if (!name) return
       try { updateWorkspace(renameProject(workspace, name)) } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
     } else if (action === 'copy') {
-      if (!(await flushCurrentWorkspace())) {
-        window.alert('当前项目保存失败。请先导出 ZIP 备份，再复制项目。')
-        return
-      }
-      const current = workspaceRef.current
-      if (!current) return
-      const copyNameWith = (label: string) => `${current.project.name.slice(0, 120 - label.length)}${label}`
-      let name = copyNameWith(' 副本')
-      let suffix = 2
-      while (projects.some((project) => project.name === name)) name = copyNameWith(` 副本 ${suffix++}`)
-      const next = renameProject(importWorkspaceZip(exportWorkspaceZip(current)), name)
-      await store.save(next)
-      setWorkspace(next)
-      setActiveFileId(next.project.entryFileId)
-      setSelectedFolderId(null)
-      await refreshProjects()
-    } else if (action === 'delete' && window.confirm(`确定删除项目“${workspace.project.name}”？此操作不能撤销，请先导出 ZIP 备份。`)) {
-      if (!(await flushCurrentWorkspace())) {
-        window.alert('当前项目保存失败。请先导出 ZIP 备份，再删除项目。')
-        return
-      }
-      const deleteTask = saveQueueRef.current.catch(() => undefined).then(() => store.delete(workspace.project.id))
-      saveQueueRef.current = deleteTask.then(() => undefined, () => undefined)
-      await deleteTask
-      const remaining = await store.listProjects()
-      let next = remaining[0] ? await store.load(remaining[0].id) : null
-      if (!next) {
-        next = createStarterWorkspace()
+      if (!beginTransition()) return
+      try {
+        if (!(await flushCurrentWorkspace())) {
+          window.alert('当前项目保存失败。请先导出 ZIP 备份，再复制项目。')
+          return
+        }
+        const current = workspaceRef.current
+        if (!current) return
+        const copyNameWith = (label: string) => `${current.project.name.slice(0, 120 - label.length)}${label}`
+        let name = copyNameWith(' 副本')
+        let suffix = 2
+        while (projects.some((project) => project.name === name)) name = copyNameWith(` 副本 ${suffix++}`)
+        const next = renameProject(importWorkspaceZip(exportWorkspaceZip(current)), name)
         await store.save(next)
-      }
-      setWorkspace(next)
-      setActiveFileId(next.project.entryFileId)
-      setSelectedFolderId(null)
-      dirtyRef.current = false
-      setSaveState('saved')
-      await refreshProjects()
+        setWorkspace(next)
+        setActiveFileId(next.project.entryFileId)
+        setSelectedFolderId(null)
+        await refreshProjects()
+      } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
+      finally { finishTransition() }
+    } else if (action === 'delete' && window.confirm(`确定删除项目“${workspace.project.name}”？此操作不能撤销，请先导出 ZIP 备份。`)) {
+      if (!beginTransition()) return
+      try {
+        if (!(await flushCurrentWorkspace())) {
+          window.alert('当前项目保存失败。请先导出 ZIP 备份，再删除项目。')
+          return
+        }
+        const deleteTask = saveQueueRef.current.catch(() => undefined).then(() => store.delete(workspace.project.id))
+        saveQueueRef.current = deleteTask.then(() => undefined, () => undefined)
+        await deleteTask
+        const remaining = await store.listProjects()
+        let next = remaining[0] ? await store.load(remaining[0].id) : null
+        if (!next) {
+          next = createStarterWorkspace()
+          await store.save(next)
+        }
+        setWorkspace(next)
+        setActiveFileId(next.project.entryFileId)
+        setSelectedFolderId(null)
+        dirtyRef.current = false
+        setSaveState('saved')
+        await refreshProjects()
+      } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
+      finally { finishTransition() }
     }
   }
 
   const switchProject = async (id: string) => {
-    if (!(await flushCurrentWorkspace())) {
-      window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
-      return
-    }
-    const next = await store.load(id)
-    if (next) {
-      setWorkspace(next)
-      setActiveFileId(next.project.entryFileId)
-      setSelectedFolderId(null)
-    }
+    if (!beginTransition()) return
+    try {
+      if (!(await flushCurrentWorkspace())) {
+        window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
+        return
+      }
+      const next = await store.load(id)
+      if (next) {
+        setWorkspace(next)
+        setActiveFileId(next.project.entryFileId)
+        setSelectedFolderId(null)
+      }
+    } finally { finishTransition() }
   }
 
   const importProject = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -431,16 +459,21 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
         event.target.value = ''
         return
       }
-      if (!(await flushCurrentWorkspace())) {
-        window.alert('当前项目保存失败。请先导出 ZIP 备份，再导入项目。')
-        event.target.value = ''
-        return
+      if (!beginTransition()) return
+      try {
+        if (!(await flushCurrentWorkspace())) {
+          window.alert('当前项目保存失败。请先导出 ZIP 备份，再导入项目。')
+          event.target.value = ''
+          return
+        }
+        await store.save(next)
+        setWorkspace(next)
+        setActiveFileId(next.project.entryFileId)
+        setSelectedFolderId(null)
+        await refreshProjects()
+      } finally {
+        finishTransition()
       }
-      await store.save(next)
-      setWorkspace(next)
-      setActiveFileId(next.project.entryFileId)
-      setSelectedFolderId(null)
-      await refreshProjects()
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
     event.target.value = ''
   }
@@ -455,7 +488,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
 
   return (
     <div
-      className={`app-shell ${sidebarOpen ? '' : 'sidebar-closed'} ${outputOpen ? '' : 'output-closed'}`}
+      className={`app-shell ${sidebarOpen ? '' : 'sidebar-closed'} ${outputOpen ? '' : 'output-closed'} ${transitioning ? 'transitioning' : ''}`}
       style={{ '--sidebar-width': `${sidebarWidth}px`, '--output-height': `${outputHeight}px` } as React.CSSProperties}
     >
       <header className="topbar">
@@ -469,6 +502,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
           <button className="icon-button" onClick={() => void projectAction()} aria-label="项目操作">•••</button>
         </div>
         <div className="top-actions">
+          {transitioning && <span className="transition-state" role="status">正在安全保存并切换…</span>}
           {offlineReady && <span className="offline-ready" role="status">可离线使用</span>}
           <span className={`save-state ${saveState}`}>{saveState === 'saved' ? '已保存' : saveState === 'saving' ? '保存中…' : '保存失败，请导出备份'}</span>
           <button onClick={() => setSidebarOpen((open) => !open)}>{sidebarOpen ? '隐藏文件' : '显示文件'}</button>
@@ -523,7 +557,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
         </div>
         {activeFile ? (
           <Suspense fallback={<div className="empty-editor">正在加载代码编辑器…</div>}>
-            <CodeEditor value={activeFile.content} fontSize={fontSize} onChange={(content) => updateWorkspace(updateFileContent(workspace, activeFile.id, content))} />
+            <CodeEditor value={activeFile.content} fontSize={fontSize} readOnly={transitioning} onChange={(content) => updateWorkspace(updateFileContent(workspace, activeFile.id, content))} />
           </Suspense>
         ) : <div className="empty-editor">从左侧选择一个文件开始编辑。</div>}
       </main>

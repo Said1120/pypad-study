@@ -76,6 +76,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .cm-content:foc
 .save-state { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .save-state.error { color: var(--danger); font-weight: 600; }
 .offline-ready { padding: 4px 8px; border-radius: 999px; color: var(--success); background: rgba(46, 125, 98, .1); font-size: 11px; white-space: nowrap; }
+.transition-state { color: var(--blue-dark); font-size: 11px; white-space: nowrap; }
 
 .icon-button { min-width: 38px; padding: 0 6px; border: 1px solid var(--line); border-radius: 9px; background: white; color: inherit; }
 
@@ -162,12 +163,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, .cm-content:foc
 .output-closed { grid-template-rows: var(--header-height) minmax(220px, 1fr) 0 28px; }
 .output-closed .output-panel { opacity: 0; pointer-events: none; }
 .output-closed .output-resizer { display: none; }
+.transitioning .sidebar, .transitioning .editor-area { pointer-events: none; opacity: .78; }
 
 @media (max-width: 820px), (orientation: portrait) {
   .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "editor" "output" "privacy"; }
   .topbar { gap: 10px; }
   .brand { min-width: auto; }
-  .brand p, .project-switcher label, .save-state, .offline-ready, .top-actions > button:not(.run-button):not(.stop-button) { display: none; }
+  .brand p, .project-switcher label, .save-state, .offline-ready, .transition-state, .top-actions > button:not(.run-button):not(.stop-button) { display: none; }
   .project-switcher { margin-left: auto; }
   .top-actions { margin-left: 0; }
   .sidebar { position: fixed; z-index: 10; inset: var(--header-height) auto 28px 0; width: min(78vw, 320px); box-shadow: 8px 0 28px rgba(35, 38, 52, .16); }

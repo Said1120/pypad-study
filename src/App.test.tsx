@@ -11,6 +11,7 @@ class MemoryStore implements WorkspaceStore {
   settings?: AppSettings
   packages: PackageRecord[] = []
   saveDelays: number[] = []
+  deleteDelay = 0
 
   async listProjects() { return this.workspaces.map((item) => item.project) }
   async load(id: string) { return this.workspaces.find((item) => item.project.id === id) ?? null }
@@ -19,7 +20,10 @@ class MemoryStore implements WorkspaceStore {
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
     this.workspaces = [...this.workspaces.filter((item) => item.project.id !== workspace.project.id), structuredClone(workspace)]
   }
-  async delete(id: string) { this.workspaces = this.workspaces.filter((item) => item.project.id !== id) }
+  async delete(id: string) {
+    if (this.deleteDelay) await new Promise((resolve) => setTimeout(resolve, this.deleteDelay))
+    this.workspaces = this.workspaces.filter((item) => item.project.id !== id)
+  }
   async loadSettings() { return this.settings }
   async saveSettings(settings: AppSettings) { this.settings = settings }
   async listPackages() { return this.packages }
@@ -208,12 +212,12 @@ describe('PyPad app', () => {
     expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(second.project.id)
   })
 
-  test('keeps editing while a project-change flush is still waiting', async () => {
+  test('locks editing for the entire project transition', async () => {
     const user = userEvent.setup()
     const store = new MemoryStore()
     const original = createStarterWorkspace('并发编辑', 100, () => crypto.randomUUID())
     store.workspaces = [original]
-    store.saveDelays = [250]
+    store.saveDelays = [50, 300]
     vi.spyOn(window, 'prompt').mockReturnValue('新项目')
     render(<App store={store} runtime={new FakeRuntime()} />)
     const editor = await screen.findByRole('textbox', { name: 'Python 代码编辑器' })
@@ -221,11 +225,12 @@ describe('PyPad app', () => {
     await user.keyboard('x')
 
     fireEvent.click(screen.getByRole('button', { name: '新建项目' }))
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(editor).toHaveAttribute('contenteditable', 'false')
     await user.click(editor)
     await user.keyboard('y')
 
-    await waitFor(async () => expect((await store.load(original.project.id))?.nodes[0].content).toMatch(/x.*y|y.*x/s), { timeout: 2000 })
+    await waitFor(async () => expect((await store.load(original.project.id))?.nodes[0].content).toBe(`x${original.nodes[0].content}`), { timeout: 2000 })
   })
 
   test('does not let a queued autosave recreate a deleted project', async () => {
@@ -234,6 +239,7 @@ describe('PyPad app', () => {
     const doomed = createStarterWorkspace('待删除', 100, () => crypto.randomUUID())
     store.workspaces = [doomed]
     store.saveDelays = [350]
+    store.deleteDelay = 300
     vi.spyOn(window, 'prompt').mockReturnValue('delete')
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<App store={store} runtime={new FakeRuntime()} />)
@@ -243,6 +249,10 @@ describe('PyPad app', () => {
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     fireEvent.click(screen.getByRole('button', { name: '项目操作' }))
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(editor).toHaveAttribute('contenteditable', 'false')
+    await user.click(editor)
+    await user.keyboard('y')
 
     await waitFor(() => expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false), { timeout: 2000 })
     await new Promise((resolve) => setTimeout(resolve, 500))
