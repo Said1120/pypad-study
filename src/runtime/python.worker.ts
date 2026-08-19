@@ -120,10 +120,15 @@ async function run(entryPath: string): Promise<void> {
     const quotedRoot = JSON.stringify(projectRoot)
     const quotedEntry = JSON.stringify(safePath(entryPath))
     await pyodide.runPythonAsync(`
-import os, runpy, sys
+import importlib, os, runpy, sys
 os.chdir(${quotedRoot})
 if ${quotedRoot} not in sys.path:
     sys.path.insert(0, ${quotedRoot})
+for _pypad_name, _pypad_module in list(sys.modules.items()):
+    _pypad_file = getattr(_pypad_module, "__file__", None)
+    if _pypad_file and os.path.realpath(_pypad_file).startswith(${quotedRoot} + os.sep):
+        del sys.modules[_pypad_name]
+importlib.invalidate_caches()
 runpy.run_path(${quotedEntry}, run_name="__main__")
 `)
     await collectPlots()

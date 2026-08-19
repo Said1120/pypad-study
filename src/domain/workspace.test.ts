@@ -4,6 +4,7 @@ import {
   addFolder,
   createStarterWorkspace,
   duplicateNode,
+  moveNode,
   removeNode,
   renameNode,
 } from './workspace'
@@ -68,5 +69,20 @@ describe('workspace model', () => {
     expect(workspace.project.entryFileId).toBe('second')
     expect(workspace.nodes.some((node) => node.id === 'main')).toBe(false)
   })
-})
 
+  test('reserves the root archive manifest name for ZIP backups', () => {
+    const workspace = createStarterWorkspace('练习', 100, ids('project', 'main'))
+
+    expect(() => addFile(workspace, null, '.pypad-project.json')).toThrow('名称由 PyPad 保留')
+    expect(() => renameNode(workspace, 'main', '.pypad-project.json')).toThrow('名称由 PyPad 保留')
+  })
+
+  test('moves files into folders and prevents moving a folder into its descendant', () => {
+    let workspace = createStarterWorkspace('练习', 100, ids('project', 'main'))
+    workspace = addFolder(workspace, null, '章节', 101, ids('chapter'))
+    workspace = addFolder(workspace, 'chapter', '子目录', 102, ids('child'))
+
+    expect(moveNode(workspace, 'main', 'chapter').nodes.find((node) => node.id === 'main')?.parentId).toBe('chapter')
+    expect(() => moveNode(workspace, 'chapter', 'child')).toThrow('不能移动到自身的子文件夹')
+  })
+})

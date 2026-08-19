@@ -6,6 +6,8 @@ export interface AppSettings {
   fontSize: number
   sidebarOpen: boolean
   outputOpen: boolean
+  sidebarWidth?: number
+  outputHeight?: number
   activeProjectId?: string
   activeFileId?: string
 }

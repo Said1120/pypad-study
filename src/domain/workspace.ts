@@ -26,6 +26,7 @@ export interface Workspace {
 export type IdGenerator = () => string
 
 const defaultId: IdGenerator = () => crypto.randomUUID()
+export const ARCHIVE_MANIFEST_NAME = '.pypad-project.json'
 
 function validateName(name: string): string {
   const clean = name.trim()
@@ -37,6 +38,10 @@ function validateName(name: string): string {
 function assertUnique(workspace: Workspace, parentId: string | null, name: string, exceptId?: string): void {
   const exists = workspace.nodes.some((node) => node.parentId === parentId && node.name === name && node.id !== exceptId)
   if (exists) throw new Error('同一文件夹中已存在同名项目')
+}
+
+function assertNotReservedRootFile(parentId: string | null, name: string): void {
+  if (parentId === null && name === ARCHIVE_MANIFEST_NAME) throw new Error('此名称由 PyPad 保留')
 }
 
 function assertFolder(workspace: Workspace, parentId: string | null): void {
@@ -73,6 +78,10 @@ export function createStarterWorkspace(
   }
 }
 
+export function renameProject(workspace: Workspace, name: string, now = Date.now()): Workspace {
+  return { ...workspace, project: { ...workspace.project, name: validateName(name), updatedAt: now } }
+}
+
 export function addFile(
   workspace: Workspace,
   parentId: string | null,
@@ -83,6 +92,7 @@ export function addFile(
 ): Workspace {
   const clean = validateName(name)
   assertFolder(workspace, parentId)
+  assertNotReservedRootFile(parentId, clean)
   assertUnique(workspace, parentId, clean)
   return {
     project: { ...workspace.project, updatedAt: now },
@@ -135,10 +145,30 @@ export function renameNode(workspace: Workspace, nodeId: string, name: string, n
   const target = workspace.nodes.find((node) => node.id === nodeId)
   if (!target) throw new Error('文件或文件夹不存在')
   const clean = validateName(name)
+  if (target.kind === 'file') assertNotReservedRootFile(target.parentId, clean)
   assertUnique(workspace, target.parentId, clean, nodeId)
   return {
     project: { ...workspace.project, updatedAt: now },
     nodes: workspace.nodes.map((node) => node.id === nodeId ? { ...node, name: clean, updatedAt: now } : node),
+  }
+}
+
+export function moveNode(workspace: Workspace, nodeId: string, parentId: string | null, now = Date.now()): Workspace {
+  const target = workspace.nodes.find((node) => node.id === nodeId)
+  if (!target) throw new Error('文件或文件夹不存在')
+  assertFolder(workspace, parentId)
+  if (target.kind === 'folder') {
+    let ancestorId = parentId
+    while (ancestorId) {
+      if (ancestorId === target.id) throw new Error('文件夹不能移动到自身的子文件夹')
+      ancestorId = workspace.nodes.find((node) => node.id === ancestorId)?.parentId ?? null
+    }
+  }
+  if (target.kind === 'file') assertNotReservedRootFile(parentId, target.name)
+  assertUnique(workspace, parentId, target.name, target.id)
+  return {
+    project: { ...workspace.project, updatedAt: now },
+    nodes: workspace.nodes.map((node) => node.id === nodeId ? { ...node, parentId, updatedAt: now } : node),
   }
 }
 
@@ -219,4 +249,3 @@ export function setEntryFile(workspace: Workspace, nodeId: string, now = Date.no
   if (!target) throw new Error('入口必须是 Python 文件')
   return { ...workspace, project: { ...workspace.project, entryFileId: nodeId, updatedAt: now } }
 }
-

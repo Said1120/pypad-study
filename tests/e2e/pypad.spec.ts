@@ -63,6 +63,25 @@ test('runs a project that imports another local file', async ({ page }) => {
   await expect(page.locator('.console')).toContainText('42', { timeout: 30_000 })
 })
 
+test('reloads an edited local module on the next run', async ({ page }) => {
+  await page.goto('/')
+  await waitForRuntime(page)
+  page.once('dialog', (dialog) => dialog.accept('helper.py'))
+  await page.getByRole('button', { name: '新建文件', exact: true }).click()
+  await replaceCode(page, 'answer = 1\n')
+  await page.getByRole('button', { name: 'main.py 运行', exact: true }).click()
+  await replaceCode(page, 'from helper import answer\nprint(answer)\n')
+  await page.getByRole('button', { name: '▶ 运行', exact: true }).click()
+  await expect(page.locator('.console')).toContainText('1', { timeout: 30_000 })
+
+  await page.getByRole('button', { name: 'helper.py', exact: true }).click()
+  await replaceCode(page, 'answer = 2\n')
+  await page.getByRole('button', { name: 'main.py 运行', exact: true }).click()
+  await page.getByRole('button', { name: '▶ 运行', exact: true }).click()
+
+  await expect(page.locator('.console')).toContainText('2', { timeout: 30_000 })
+})
+
 test('renders a Matplotlib figure in the output panel', async ({ page }) => {
   await page.goto('/')
   await waitForRuntime(page)
