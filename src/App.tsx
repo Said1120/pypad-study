@@ -454,30 +454,28 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   const importProject = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
+    if (!beginTransition()) {
+      event.target.value = ''
+      return
+    }
     try {
       if (file.size > MAX_ARCHIVE_BYTES) throw new Error('ZIP 超过 10 MB，无法安全导入')
       const next = importWorkspaceZip(new Uint8Array(await file.arrayBuffer()))
-      if (!window.confirm(buildImportPreview(next, projects.map((project) => project.name)))) {
-        event.target.value = ''
+      if (!window.confirm(buildImportPreview(next, projects.map((project) => project.name)))) return
+      if (!(await flushCurrentWorkspace())) {
+        window.alert('当前项目保存失败。请先导出 ZIP 备份，再导入项目。')
         return
       }
-      if (!beginTransition()) return
-      try {
-        if (!(await flushCurrentWorkspace())) {
-          window.alert('当前项目保存失败。请先导出 ZIP 备份，再导入项目。')
-          event.target.value = ''
-          return
-        }
-        await store.save(next)
-        setWorkspace(next)
-        setActiveFileId(next.project.entryFileId)
-        setSelectedFolderId(null)
-        await refreshProjects()
-      } finally {
-        finishTransition()
-      }
+      await store.save(next)
+      setWorkspace(next)
+      setActiveFileId(next.project.entryFileId)
+      setSelectedFolderId(null)
+      await refreshProjects()
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
-    event.target.value = ''
+    finally {
+      finishTransition()
+      event.target.value = ''
+    }
   }
 
   const exportProject = () => {

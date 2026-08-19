@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { App, type RuntimeService, type WorkspaceStore } from './App'
 import { createStarterWorkspace, type Workspace } from './domain/workspace'
+import { exportWorkspaceZip } from './platform/workspaceArchive'
 import type { AppSettings, PackageRecord } from './platform/workspaceRepository'
 import type { RuntimeEvent, SupportedPackage } from './runtime/protocol'
 
@@ -262,5 +263,32 @@ describe('PyPad app', () => {
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false)
     expect(runtime.run).not.toHaveBeenCalled()
+  })
+
+  test('locks running as soon as a ZIP import starts reading', async () => {
+    const store = new MemoryStore()
+    const runtime = new FakeRuntime()
+    store.workspaces = [createStarterWorkspace('当前项目', 100, () => crypto.randomUUID())]
+    const imported = createStarterWorkspace('导入项目', 90, () => crypto.randomUUID())
+    const archive = exportWorkspaceZip(imported)
+    const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer
+    let finishReading!: (value: ArrayBuffer) => void
+    const reading = new Promise<ArrayBuffer>((resolve) => { finishReading = resolve })
+    const file = new File([archiveBuffer], 'project.zip', { type: 'application/zip' })
+    Object.defineProperty(file, 'arrayBuffer', { value: vi.fn(() => reading) })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App store={store} runtime={runtime} />)
+    await screen.findByRole('navigation', { name: '项目文件' })
+
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+
+    const runButton = screen.getByRole('button', { name: '▶ 运行' })
+    expect(runButton).toBeDisabled()
+    fireEvent.click(runButton)
+    expect(runtime.run).not.toHaveBeenCalled()
+
+    finishReading(archiveBuffer)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '项目' })).toHaveDisplayValue('导入项目'))
+    expect(runButton).toBeEnabled()
   })
 })
