@@ -28,10 +28,23 @@ export type IdGenerator = () => string
 const defaultId: IdGenerator = () => crypto.randomUUID()
 export const ARCHIVE_MANIFEST_NAME = '.pypad-project.json'
 
-function validateName(name: string): string {
+function validateBaseName(name: string): string {
   const clean = name.trim()
   if (!clean) throw new Error('名称不能为空')
   if (clean.includes('/') || clean.includes('\\')) throw new Error('名称不能包含路径分隔符')
+  return clean
+}
+
+export function validateNodeName(name: string): string {
+  const clean = validateBaseName(name)
+  if (clean === '.' || clean === '..') throw new Error('名称不能是 . 或 ..')
+  if (clean.length > 128) throw new Error('名称不能超过 128 个字符')
+  return clean
+}
+
+export function validateProjectName(name: string): string {
+  const clean = validateBaseName(name)
+  if (clean.length > 120) throw new Error('项目名称不能超过 120 个字符')
   return clean
 }
 
@@ -61,7 +74,7 @@ export function createStarterWorkspace(
   return {
     project: {
       id: projectId,
-      name: validateName(name),
+      name: validateProjectName(name),
       entryFileId: fileId,
       createdAt: now,
       updatedAt: now,
@@ -79,7 +92,7 @@ export function createStarterWorkspace(
 }
 
 export function renameProject(workspace: Workspace, name: string, now = Date.now()): Workspace {
-  return { ...workspace, project: { ...workspace.project, name: validateName(name), updatedAt: now } }
+  return { ...workspace, project: { ...workspace.project, name: validateProjectName(name), updatedAt: now } }
 }
 
 export function addFile(
@@ -90,7 +103,7 @@ export function addFile(
   now = Date.now(),
   nextId: IdGenerator = defaultId,
 ): Workspace {
-  const clean = validateName(name)
+  const clean = validateNodeName(name)
   assertFolder(workspace, parentId)
   assertNotReservedRootFile(parentId, clean)
   assertUnique(workspace, parentId, clean)
@@ -115,7 +128,7 @@ export function addFolder(
   now = Date.now(),
   nextId: IdGenerator = defaultId,
 ): Workspace {
-  const clean = validateName(name)
+  const clean = validateNodeName(name)
   assertFolder(workspace, parentId)
   assertUnique(workspace, parentId, clean)
   return {
@@ -144,7 +157,7 @@ export function updateFileContent(workspace: Workspace, nodeId: string, content:
 export function renameNode(workspace: Workspace, nodeId: string, name: string, now = Date.now()): Workspace {
   const target = workspace.nodes.find((node) => node.id === nodeId)
   if (!target) throw new Error('文件或文件夹不存在')
-  const clean = validateName(name)
+  const clean = validateNodeName(name)
   if (target.kind === 'file') assertNotReservedRootFile(target.parentId, clean)
   assertUnique(workspace, target.parentId, clean, nodeId)
   return {
@@ -180,10 +193,11 @@ export function duplicateNode(
 ): Workspace {
   const target = workspace.nodes.find((node) => node.id === nodeId)
   if (!target) throw new Error('文件或文件夹不存在')
-  let copyName = `${target.name} 副本`
+  const copyNameWith = (label: string) => `${target.name.slice(0, 128 - label.length)}${label}`
+  let copyName = copyNameWith(' 副本')
   let suffix = 2
   while (workspace.nodes.some((node) => node.parentId === target.parentId && node.name === copyName)) {
-    copyName = `${target.name} 副本 ${suffix++}`
+    copyName = copyNameWith(` 副本 ${suffix++}`)
   }
 
   const copies: FileNode[] = []

@@ -1,5 +1,12 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { ARCHIVE_MANIFEST_NAME, type FileNode, type IdGenerator, type Workspace } from '../domain/workspace'
+import {
+  ARCHIVE_MANIFEST_NAME,
+  validateNodeName,
+  validateProjectName as validateWorkspaceProjectName,
+  type FileNode,
+  type IdGenerator,
+  type Workspace,
+} from '../domain/workspace'
 
 export const MAX_ARCHIVE_BYTES = 10 * 1024 * 1024
 const MAX_ARCHIVE_FILES = 500
@@ -18,10 +25,8 @@ function archiveError(message: string): Error {
 }
 
 function validateProjectName(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim() || value !== value.trim() || value.length > 120 || /[\\/]/.test(value)) {
-    throw archiveError('项目名称无效')
-  }
-  return value
+  if (typeof value !== 'string' || value !== value.trim()) throw archiveError('项目名称无效')
+  try { return validateWorkspaceProjectName(value) } catch { throw archiveError('项目名称无效') }
 }
 
 function validateArchivePath(path: unknown): string {
@@ -29,8 +34,9 @@ function validateArchivePath(path: unknown): string {
     throw archiveError('文件路径无效')
   }
   const parts = path.split('/')
-  if (parts.some((part) => !part || part === '.' || part === '..' || part !== part.trim() || part.length > 128)) {
-    throw archiveError('文件路径无效')
+  for (const part of parts) {
+    if (part !== part.trim()) throw archiveError('文件路径无效')
+    try { validateNodeName(part) } catch { throw archiveError('文件路径无效') }
   }
   return path
 }
@@ -53,7 +59,7 @@ function readManifest(bytes: Uint8Array): ArchiveManifest {
 }
 
 function nodePath(nodes: FileNode[], node: FileNode): string {
-  const parts = [node.name]
+  const parts = [validateNodeName(node.name)]
   let parentId = node.parentId
   const seen = new Set([node.id])
   while (parentId) {
@@ -61,7 +67,7 @@ function nodePath(nodes: FileNode[], node: FileNode): string {
     seen.add(parentId)
     const parent = nodes.find((candidate) => candidate.id === parentId)
     if (!parent) throw new Error('项目目录结构损坏')
-    parts.unshift(parent.name)
+    parts.unshift(validateNodeName(parent.name))
     parentId = parent.parentId
   }
   return parts.join('/')
@@ -81,10 +87,22 @@ export function exportWorkspaceZip(workspace: Workspace): Uint8Array {
       entryPath: nodePath(workspace.nodes, entry),
     } satisfies ArchiveManifest, null, 2)),
   }
+  let fileCount = 1
+  let outputBytes = files[ARCHIVE_MANIFEST_NAME].byteLength
   for (const node of workspace.nodes) {
-    if (node.kind === 'file') files[nodePath(workspace.nodes, node)] = strToU8(node.content)
+    if (node.kind !== 'file') continue
+    const path = validateArchivePath(nodePath(workspace.nodes, node))
+    const bytes = strToU8(node.content)
+    fileCount += 1
+    outputBytes += bytes.byteLength
+    if (bytes.byteLength > MAX_ARCHIVE_FILE_BYTES) throw new Error(`${path} 文件过大，不能超过 2 MB`)
+    if (fileCount > MAX_ARCHIVE_FILES) throw new Error('项目文件数量超过 500 个')
+    if (outputBytes > MAX_ARCHIVE_OUTPUT_BYTES) throw new Error('项目内容超过 10 MB')
+    files[path] = bytes
   }
-  return zipSync(files, { level: 6 })
+  const archive = zipSync(files, { level: 6 })
+  if (archive.byteLength > MAX_ARCHIVE_BYTES) throw new Error('ZIP 超过 10 MB')
+  return archive
 }
 
 export function importWorkspaceZip(zip: Uint8Array, now = Date.now(), nextId: IdGenerator = () => crypto.randomUUID()): Workspace {

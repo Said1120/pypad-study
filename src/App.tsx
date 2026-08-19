@@ -115,6 +115,22 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
     }
   }, [refreshProjects, store])
 
+  const flushCurrentWorkspace = useCallback(async (): Promise<boolean> => {
+    const projectId = workspaceRef.current?.project.id
+    if (!projectId) return true
+    while (workspaceRef.current?.project.id === projectId) {
+      const revision = revisionRef.current
+      if (!dirtyRef.current) {
+        await saveQueueRef.current
+        if (!dirtyRef.current && revisionRef.current === revision) return true
+        continue
+      }
+      if (!(await persist(workspaceRef.current, revision))) return false
+      if (!dirtyRef.current && revisionRef.current === revision) return true
+    }
+    return false
+  }, [persist])
+
   useEffect(() => {
     let active = true
     void (async () => {
@@ -228,7 +244,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   useEffect(() => {
     if (!workspace || !dirtyRef.current) return
     setSaveState('saving')
-    const timer = setTimeout(() => void persist(workspace), 450)
+    const timer = setTimeout(() => { if (dirtyRef.current) void persist(workspace) }, 450)
     return () => clearTimeout(timer)
   }, [persist, workspace])
 
@@ -331,16 +347,18 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   const createProject = async () => {
     const name = window.prompt('项目名称', '新的 Python 项目')
     if (!name) return
-    if (dirtyRef.current && !(await persist())) {
+    if (!(await flushCurrentWorkspace())) {
       window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
       return
     }
-    const next = createStarterWorkspace(name)
-    await store.save(next)
-    setWorkspace(next)
-    setActiveFileId(next.project.entryFileId)
-    setSelectedFolderId(null)
-    await refreshProjects()
+    try {
+      const next = createStarterWorkspace(name)
+      await store.save(next)
+      setWorkspace(next)
+      setActiveFileId(next.project.entryFileId)
+      setSelectedFolderId(null)
+      await refreshProjects()
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
   }
 
   const projectAction = async () => {
@@ -351,22 +369,30 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
       if (!name) return
       try { updateWorkspace(renameProject(workspace, name)) } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
     } else if (action === 'copy') {
-      if (dirtyRef.current && !(await persist())) {
+      if (!(await flushCurrentWorkspace())) {
         window.alert('当前项目保存失败。请先导出 ZIP 备份，再复制项目。')
         return
       }
-      let name = `${workspace.project.name} 副本`
+      const current = workspaceRef.current
+      if (!current) return
+      const copyNameWith = (label: string) => `${current.project.name.slice(0, 120 - label.length)}${label}`
+      let name = copyNameWith(' 副本')
       let suffix = 2
-      while (projects.some((project) => project.name === name)) name = `${workspace.project.name} 副本 ${suffix++}`
-      const next = importWorkspaceZip(exportWorkspaceZip(workspace))
-      next.project.name = name
+      while (projects.some((project) => project.name === name)) name = copyNameWith(` 副本 ${suffix++}`)
+      const next = renameProject(importWorkspaceZip(exportWorkspaceZip(current)), name)
       await store.save(next)
       setWorkspace(next)
       setActiveFileId(next.project.entryFileId)
       setSelectedFolderId(null)
       await refreshProjects()
     } else if (action === 'delete' && window.confirm(`确定删除项目“${workspace.project.name}”？此操作不能撤销，请先导出 ZIP 备份。`)) {
-      await store.delete(workspace.project.id)
+      if (!(await flushCurrentWorkspace())) {
+        window.alert('当前项目保存失败。请先导出 ZIP 备份，再删除项目。')
+        return
+      }
+      const deleteTask = saveQueueRef.current.catch(() => undefined).then(() => store.delete(workspace.project.id))
+      saveQueueRef.current = deleteTask.then(() => undefined, () => undefined)
+      await deleteTask
       const remaining = await store.listProjects()
       let next = remaining[0] ? await store.load(remaining[0].id) : null
       if (!next) {
@@ -383,7 +409,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   }
 
   const switchProject = async (id: string) => {
-    if (dirtyRef.current && !(await persist())) {
+    if (!(await flushCurrentWorkspace())) {
       window.alert('当前项目保存失败。请先导出 ZIP 备份，再切换项目。')
       return
     }
@@ -405,7 +431,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
         event.target.value = ''
         return
       }
-      if (dirtyRef.current && !(await persist())) {
+      if (!(await flushCurrentWorkspace())) {
         window.alert('当前项目保存失败。请先导出 ZIP 备份，再导入项目。')
         event.target.value = ''
         return
@@ -417,6 +443,12 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
       await refreshProjects()
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
     event.target.value = ''
+  }
+
+  const exportProject = () => {
+    if (!workspace) return
+    try { download(`${workspace.project.name}.zip`, exportWorkspaceZip(workspace)) }
+    catch (error) { window.alert(error instanceof Error ? error.message : String(error)) }
   }
 
   if (!workspace) return <main className="launch-screen"><h1>PyPad 学习台</h1><p>正在打开你的项目…</p></main>
@@ -464,7 +496,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
           onContext={contextAction}
         />
         <div className="backup-actions">
-          <button onClick={() => download(`${workspace.project.name}.zip`, exportWorkspaceZip(workspace))}>导出 ZIP</button>
+          <button onClick={exportProject}>导出 ZIP</button>
           <button onClick={() => importRef.current?.click()}>导入项目</button>
           <input ref={importRef} type="file" accept=".zip,application/zip" hidden onChange={(event) => void importProject(event)} />
         </div>

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { App, type RuntimeService, type WorkspaceStore } from './App'
@@ -206,5 +206,46 @@ describe('PyPad app', () => {
 
     await waitFor(() => expect(store.workspaces.some((item) => item.project.id === first.project.id)).toBe(false))
     expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(second.project.id)
+  })
+
+  test('keeps editing while a project-change flush is still waiting', async () => {
+    const user = userEvent.setup()
+    const store = new MemoryStore()
+    const original = createStarterWorkspace('并发编辑', 100, () => crypto.randomUUID())
+    store.workspaces = [original]
+    store.saveDelays = [250]
+    vi.spyOn(window, 'prompt').mockReturnValue('新项目')
+    render(<App store={store} runtime={new FakeRuntime()} />)
+    const editor = await screen.findByRole('textbox', { name: 'Python 代码编辑器' })
+    await user.click(editor)
+    await user.keyboard('x')
+
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await user.click(editor)
+    await user.keyboard('y')
+
+    await waitFor(async () => expect((await store.load(original.project.id))?.nodes[0].content).toMatch(/x.*y|y.*x/s), { timeout: 2000 })
+  })
+
+  test('does not let a queued autosave recreate a deleted project', async () => {
+    const user = userEvent.setup()
+    const store = new MemoryStore()
+    const doomed = createStarterWorkspace('待删除', 100, () => crypto.randomUUID())
+    store.workspaces = [doomed]
+    store.saveDelays = [350]
+    vi.spyOn(window, 'prompt').mockReturnValue('delete')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App store={store} runtime={new FakeRuntime()} />)
+    const editor = await screen.findByRole('textbox', { name: 'Python 代码编辑器' })
+    await user.click(editor)
+    await user.keyboard('x')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    fireEvent.click(screen.getByRole('button', { name: '项目操作' }))
+
+    await waitFor(() => expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false), { timeout: 2000 })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false)
   })
 })

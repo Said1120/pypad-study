@@ -85,4 +85,11 @@ describe('workspace model', () => {
     expect(moveNode(workspace, 'main', 'chapter').nodes.find((node) => node.id === 'main')?.parentId).toBe('chapter')
     expect(() => moveNode(workspace, 'chapter', 'child')).toThrow('不能移动到自身的子文件夹')
   })
+
+  test('uses the same safe name limits as ZIP import', () => {
+    expect(() => createStarterWorkspace('项'.repeat(121), 100, ids('project', 'main'))).toThrow('项目名称不能超过 120 个字符')
+    const workspace = createStarterWorkspace('练习', 100, ids('project', 'main'))
+    expect(() => addFile(workspace, null, '..')).toThrow('名称不能是 . 或 ..')
+    expect(() => addFolder(workspace, null, 'a'.repeat(129))).toThrow('名称不能超过 128 个字符')
+  })
 })

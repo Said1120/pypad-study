@@ -1,6 +1,6 @@
 import { strToU8, zipSync } from 'fflate'
 import { expect, test } from 'vitest'
-import { addFile, addFolder, createStarterWorkspace } from '../domain/workspace'
+import { addFile, addFolder, createStarterWorkspace, updateFileContent } from '../domain/workspace'
 import { exportWorkspaceZip, importWorkspaceZip } from './workspaceArchive'
 
 test('ZIP export and import preserves nested text files', async () => {
@@ -38,4 +38,11 @@ test('rejects a highly compressed file beyond the per-file safety limit', () => 
   }, { level: 9 })
 
   expect(() => importWorkspaceZip(oversized)).toThrow('文件过大')
+})
+
+test('never exports a project that its own importer would reject', () => {
+  let workspace = createStarterWorkspace('过大项目', 100, () => crypto.randomUUID())
+  workspace = updateFileContent(workspace, workspace.project.entryFileId, 'x'.repeat(2 * 1024 * 1024 + 1))
+
+  expect(() => exportWorkspaceZip(workspace)).toThrow('文件过大')
 })
