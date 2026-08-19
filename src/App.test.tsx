@@ -236,26 +236,31 @@ describe('PyPad app', () => {
   test('does not let a queued autosave recreate a deleted project', async () => {
     const user = userEvent.setup()
     const store = new MemoryStore()
+    const runtime = new FakeRuntime()
     const doomed = createStarterWorkspace('待删除', 100, () => crypto.randomUUID())
     store.workspaces = [doomed]
     store.saveDelays = [350]
     store.deleteDelay = 300
     vi.spyOn(window, 'prompt').mockReturnValue('delete')
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    render(<App store={store} runtime={new FakeRuntime()} />)
+    render(<App store={store} runtime={runtime} />)
     const editor = await screen.findByRole('textbox', { name: 'Python 代码编辑器' })
     await user.click(editor)
     await user.keyboard('x')
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     fireEvent.click(screen.getByRole('button', { name: '项目操作' }))
-    await new Promise((resolve) => setTimeout(resolve, 450))
-    expect(editor).toHaveAttribute('contenteditable', 'false')
+    await screen.findByText('正在安全保存并切换…')
+    await waitFor(() => expect(editor).toHaveAttribute('contenteditable', 'false'))
     await user.click(editor)
     await user.keyboard('y')
+    expect(screen.getByRole('button', { name: '▶ 运行' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '▶ 运行' }))
+    await user.keyboard('{Meta>}s{/Meta}')
 
     await waitFor(() => expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false), { timeout: 2000 })
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(store.workspaces.some((item) => item.project.id === doomed.project.id)).toBe(false)
+    expect(runtime.run).not.toHaveBeenCalled()
   })
 })

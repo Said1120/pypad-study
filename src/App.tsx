@@ -282,6 +282,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   }
 
   const run = useCallback(() => {
+    if (transitioningRef.current) return
     const current = workspaceRef.current
     if (!current) return
     void persist(current)
@@ -293,6 +294,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return
+      if (transitioningRef.current && event.key !== '.') return
       if (event.key === 'Enter') { event.preventDefault(); run() }
       if (event.key.toLowerCase() === 's') { event.preventDefault(); void persist() }
       if (event.key === '.') { event.preventDefault(); runtime.interrupt() }
@@ -489,17 +491,18 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
   return (
     <div
       className={`app-shell ${sidebarOpen ? '' : 'sidebar-closed'} ${outputOpen ? '' : 'output-closed'} ${transitioning ? 'transitioning' : ''}`}
+      aria-busy={transitioning}
       style={{ '--sidebar-width': `${sidebarWidth}px`, '--output-height': `${outputHeight}px` } as React.CSSProperties}
     >
       <header className="topbar">
         <div className="brand"><span className="brand-mark">Py</span><div><h1>PyPad 学习台</h1><p>本地运行 · 自动保存</p></div></div>
         <div className="project-switcher">
           <label htmlFor="project-select">项目</label>
-          <select id="project-select" value={workspace.project.id} onChange={(event) => void switchProject(event.target.value)}>
+          <select id="project-select" value={workspace.project.id} disabled={transitioning} onChange={(event) => void switchProject(event.target.value)}>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
-          <button className="icon-button" onClick={() => void createProject()} aria-label="新建项目">＋</button>
-          <button className="icon-button" onClick={() => void projectAction()} aria-label="项目操作">•••</button>
+          <button className="icon-button" disabled={transitioning} onClick={() => void createProject()} aria-label="新建项目">＋</button>
+          <button className="icon-button" disabled={transitioning} onClick={() => void projectAction()} aria-label="项目操作">•••</button>
         </div>
         <div className="top-actions">
           {transitioning && <span className="transition-state" role="status">正在安全保存并切换…</span>}
@@ -507,7 +510,7 @@ export function App({ store = defaultStore, runtime = defaultRuntime }: { store?
           <span className={`save-state ${saveState}`}>{saveState === 'saved' ? '已保存' : saveState === 'saving' ? '保存中…' : '保存失败，请导出备份'}</span>
           <button onClick={() => setSidebarOpen((open) => !open)}>{sidebarOpen ? '隐藏文件' : '显示文件'}</button>
           <button className="stop-button" onClick={() => runtime.interrupt()} disabled={!['running', 'waiting-input', 'stopping'].includes(runtimeStatus)}>停止</button>
-          <button className="run-button" onClick={run}>▶ 运行</button>
+          <button className="run-button" onClick={run} disabled={transitioning}>▶ 运行</button>
         </div>
       </header>
 
